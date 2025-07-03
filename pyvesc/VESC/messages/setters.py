@@ -202,5 +202,17 @@ class TerminalPrint(metaclass=VESCMessage):
     ]
 
 
+class EraseBootloader(metaclass=VESCMessage):
+    """Erase the bootloader area on the VESC, get response"""
+    id = VedderCmd.COMM_ERASE_BOOTLOADER
+    send_fields = []
+    recv_fields = [
+        ('erase_bootloader_result', 'b', 0)
+    ]
+
+
+
+
+
 # statically save this message because it does not need to be recalculated
 alive_msg = encode(Alive())

@@ -217,6 +217,97 @@ class VESC(object):
 
         return True
 
+    def update_bootloader(self, firmware, progress_callback=None):
+        """
+        Update the bootloader firmware on the VESC.
+        
+        :param firmware: Firmware object containing the bootloader firmware data
+        :param progress_callback: Optional callback function to report progress
+        :return: True if successful, False otherwise
+        """
+        try:
+            logging.info("Erasing bootloader")
+            
+            erase_res = self.erase_bootloader()
+            if erase_res is None or erase_res.erase_bootloader_result != 1:
+                logging.error("Bootloader erase failed")
+                if progress_callback:
+                    progress_callback("Bootloader erase failed")
+                return False
+            
+            logging.info("Writing bootloader firmware")
+            
+            # Bootloader starts at different offset than regular firmware
+            # For VESC hardware: 0x60000, for BMS: 0x1E000
+            # Using VESC standard offset for now
+            bootloader_offset = 1024 * 128 * 3  # 0x60000 = 393,216 bytes
+            offset = bootloader_offset
+            time_since_last_progress_update = time.time()
+            
+            while firmware.size > 0:
+                fw_chunk = firmware.get_next_chunk()
+                
+                # check if the chunk is empty, don't send
+                has_data = False
+                for i in fw_chunk:
+                    if i != 0xff:
+                        has_data = True
+                        break
+                
+                if has_data:
+                    try:
+                        # Use the same write method as regular firmware updates
+                        fw_result = self.fw_write_new_app_data(offset, fw_chunk)
+                        
+                        if fw_result is None or fw_result.write_new_app_result != 1:
+                            logging.error("Bootloader write failed at offset {}".format(offset))
+                            if fw_result:
+                                logging.error("Result: {}".format(fw_result))
+                            if progress_callback:
+                                progress_callback("Bootloader flashing failed")
+                            return False
+                    except Exception as e:
+                        logging.error("Exception during bootloader write: {}".format(e))
+                        if progress_callback:
+                            progress_callback("Bootloader flashing failed")
+                        return False
+                
+                offset += firmware.chunk_size
+                
+                UPDATE_INTERVAL_SECS = 10
+                if time.time() - time_since_last_progress_update > UPDATE_INTERVAL_SECS:
+                    time_since_last_progress_update = time.time()
+                    logging.info(
+                        "Progress: {:.2f}%, Size: {}/{}kB".format(firmware.get_progress(offset), offset, firmware.original_size))
+                    if progress_callback is not None:
+                        progress_callback(int(firmware.get_progress(offset)))
+                
+                # stream updates quickly to stdout
+                print("\rBootloader Progress: {:.2f}%, Size: {}kB, to be written to {}".format(
+                    firmware.get_progress(offset), offset, offset + firmware.chunk_size), end='\r')
+                firmware.clear_chunk()
+            
+            logging.info("Bootloader upload complete.")
+            
+            return True
+            
+        except Exception as e:
+            logging.error("Unexpected error during bootloader update: {}".format(e))
+            if progress_callback:
+                progress_callback("Bootloader update failed")
+            return False
+
+    def erase_bootloader(self):
+        """
+        Erase the bootloader area on the VESC.
+        
+        :return: Result object with erase_bootloader_result field
+        """
+        msg = EraseBootloader()
+        return self.write(encode_request(msg), num_read_bytes=msg._recv_full_msg_size)
+
+
+
     def set_rpm(self, new_rpm):
         """
         Set the electronic RPM value (a.k.a. the RPM value of the stator)

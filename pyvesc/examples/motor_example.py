@@ -180,7 +180,7 @@ if __name__ == '__main__':
     # arguments
     parser = argparse.ArgumentParser(description='VESC Motor Example')
     parser.add_argument('-p', '--port', type=str, help='Serial port', default='')
-    parser.add_argument('-f', '--firmware', type=str, help='Firmware file', default=None)
+    parser.add_argument('-f', '--firmware', type=str, help='Firmware file (use with "fw" command for app firmware or "fw_bl" for bootloader)', default=None)
     parser.add_argument('-c', '--compressed', action='store_true', help='Compressed firmware', default=True)
     parser.add_argument('-s', '--save', type=str, help='Save parameters to file', default=None)
     parser.add_argument('-l', '--load', type=str, help='Load parameters from file', default=None)
