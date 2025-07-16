@@ -61,14 +61,11 @@ def commands_example(port, firmware, compressed):
         print("erase\t\t- erase firmware")
         print("fw_bl\t\t- update bootloader firmware")
         print("erase_bl\t- erase bootloader")
-        print("bm_connect\t- connect to bootloader manager")
-        print("bm_disconnect\t- disconnect from bootloader manager")
         print("\nBootloader Flashing Instructions:")
-        print("1. Connect to bootloader manager with 'bm_connect'")
-        print("2. Update bootloader firmware with 'fw_bl'")
-        print("3. Alternatively, erase bootloader with 'erase_bl'")
-        print("4. Disconnect when done with 'bm_disconnect'")
-        print("\nWarning: Bootloader flashing can brick your device if interrupted!")
+        print("1. Update bootloader firmware with 'fw_bl'")
+        print("2. Alternatively, erase bootloader with 'erase_bl'")
+        print("\nNote: Bootloader uses offset 0x60000 (different from firmware offset 0x0)")
+        print("Warning: Bootloader flashing can brick your device if interrupted!")
         print("\n\nEntering Terminal:\n====================\n")
         print("\n\n")
 
@@ -94,7 +91,7 @@ def commands_example(port, firmware, compressed):
                 if firmware is None:
                     print("No firmware file specified")
                     continue
-                fw = Firmware(firmware, lzss=compressed)
+                fw = Firmware(firmware, lzss=compressed, is_bootloader=True)
                 motor.update_bootloader(fw)
                 logging.info("Bootloader update complete. This script will exit as it doesn't handle serial ports reconnecting yet.")
                 break
@@ -105,17 +102,6 @@ def commands_example(port, firmware, compressed):
                 print("Bootloader erase status:", erase_res.erase_bootloader_result)
                 break
 
-            if user_in == "bm_connect":
-                print("connecting to bootloader manager")
-                connect_res = motor.bm_connect()
-                print("BM connect status:", connect_res.bm_connect_result)
-                continue
-
-            if user_in == "bm_disconnect":
-                print("disconnecting from bootloader manager")
-                motor.bm_disconnect()
-                print("BM disconnect command sent")
-                continue
 
             if user_in == "log":
                 log_start = time.time()

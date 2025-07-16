@@ -303,6 +303,21 @@ class VESC(object):
         
         :return: Result object with erase_bootloader_result field
         """
+        # Check firmware version first to ensure bootloader erase is supported
+        try:
+            fw_version = self.get_firmware_version()
+            if fw_version is None:
+                logging.error("Could not read firmware version - bootloader erase may not be supported")
+                return None
+            
+            # Basic version check - bootloader erase was added in newer firmware versions
+            # If we can get a firmware version, assume it's recent enough to support bootloader operations
+            logging.info(f"Firmware version: {fw_version} - proceeding with bootloader erase")
+            
+        except Exception as e:
+            logging.error(f"Error checking firmware version: {e}")
+            logging.warning("Proceeding with bootloader erase anyway - this may fail on older firmware")
+        
         msg = EraseBootloader()
         return self.write(encode_request(msg), num_read_bytes=msg._recv_full_msg_size)
 

@@ -43,7 +43,7 @@ def crc16(data):
 
 
 class Firmware:
-    def __init__(self, filepath, lzss=False):
+    def __init__(self, filepath, lzss=False, is_bootloader=False):
         self.chunk_size = 384
         self.filepath = filepath
         self.name = filepath.split('/')[-1]
@@ -53,6 +53,7 @@ class Firmware:
         self.size = None
         self.chunk = None
         self.lzss = lzss
+        self.is_bootloader = is_bootloader
 
         self.load()
         self.process()
@@ -71,7 +72,13 @@ class Firmware:
     def process(self):
         """
         Process the firmware file, adds size and crc to a header for the vesc to read
+        For bootloader firmware, no header is added (raw binary)
         """
+        # Bootloader firmware should not have size/CRC headers added
+        if self.is_bootloader:
+            logger.info("Processing bootloader firmware - no headers added")
+            return
+            
         # newer firmwares are larger and require lzss compression
         # lzss compression must be generated with heatshrink
         # for now this is done externally, but could be implemented within this class
