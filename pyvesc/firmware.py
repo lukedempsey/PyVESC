@@ -43,7 +43,7 @@ def crc16(data):
 
 
 class Firmware:
-    def __init__(self, filepath, lzss=False):
+    def __init__(self, filepath, lzss=False, is_bootloader=False, infer_fw_type=True):
         self.chunk_size = 384
         self.filepath = filepath
         self.name = filepath.split('/')[-1]
@@ -53,6 +53,15 @@ class Firmware:
         self.size = None
         self.chunk = None
         self.lzss = lzss
+        self.is_bootloader = is_bootloader
+        
+        # Infer firmware type from filename if requested
+        if infer_fw_type and not is_bootloader:
+            if filepath.lower().endswith('bl.bin'):
+                self.is_bootloader = True
+                logger.info(f"Auto-detected bootloader firmware from filename: {filepath}")
+        
+        logger.info(f"Firmware object created - is_bootloader: {self.is_bootloader}, filepath: {filepath}")
 
         self.load()
         self.process()
@@ -71,7 +80,20 @@ class Firmware:
     def process(self):
         """
         Process the firmware file, adds size and crc to a header for the vesc to read
+        For bootloader firmware, no header is added (raw binary)
         """
+        # Bootloader firmware should not have size/CRC headers added
+        if self.is_bootloader:
+            logger.info("Processing bootloader firmware - no headers added")
+            
+            # Validate bootloader size - bootloaders should be small (typically < 10KB)
+            max_bootloader_size = 10 * 1024  # 10KB
+            if self.size > max_bootloader_size:
+                raise ValueError(f"Bootloader firmware is too large: {self.size} bytes (max {max_bootloader_size} bytes). "
+                               f"This may not be a valid bootloader file or could damage your device.")
+            
+            return
+            
         # newer firmwares are larger and require lzss compression
         # lzss compression must be generated with heatshrink
         # for now this is done externally, but could be implemented within this class
@@ -94,6 +116,9 @@ class Firmware:
 
     def __str__(self):
         return f'{self.name} {self.version} {self.size*1e-3}kB, ({self.original_size}B)'
+    
+    def __repr__(self):
+        return f'Firmware(filepath="{self.filepath}", lzss={self.lzss}, is_bootloader={self.is_bootloader}, size={self.size}B)'
 
     def print_bytes(self):
         """

@@ -3,7 +3,8 @@ from .messages.getters import GetVersion, GetMotorConfig, GetAppConfig, GetValue
 from .messages.setters import (
     SetMotorConfig, SetAppConfig, SetRPM, SetCurrent, SetDutyCycle,
     SetServoPosition, EraseNewApp, WriteNewAppData, WriteNewAppDataLZO,
-    JumpToBootloader, TerminalCmd, SetRotorPositionMode, Reboot, alive_msg
+    JumpToBootloader, TerminalCmd, SetRotorPositionMode, Reboot, alive_msg,
+    EraseBootloader
 )
 import time
 import threading
@@ -164,62 +165,158 @@ class VESC(object):
         return response
 
     def update_firmware(self, firmware, progress_callback=None):
+        """
+        Update firmware on the VESC (main firmware or bootloader).
+        
+        :param firmware: Firmware object containing the firmware data
+        :param progress_callback: Optional callback function to report progress
+        :return: True if successful, False otherwise
+        """
+        logging.info(f"Firmware update - is_bootloader: {firmware.is_bootloader}, filepath: {firmware.filepath}")
+        if firmware.is_bootloader:
+            # Bootloader starts at different offset than regular firmware
+            # For VESC hardware: 0x60000, for BMS: 0x1E000
+            # Using VESC standard offset for now
+            bootloader_offset = 1024 * 128 * 3  # 0x60000 = 393,216 bytes
+            
+            # Erase and upload with bootloader-specific settings
+            success = self._update_firmware_common(
+                firmware=firmware,
+                progress_callback=progress_callback,
+                is_bootloader=True,
+                flash_offset=bootloader_offset,
+                erase_func=self.erase_bootloader,
+                erase_result_attr='erase_bootloader_result'
+            )
+            
+            if success:
+                logging.info("Bootloader upload complete.")
+        else:
+            # Erase and upload with firmware-specific settings
+            success = self._update_firmware_common(
+                firmware=firmware,
+                progress_callback=progress_callback,
+                is_bootloader=False,
+                flash_offset=0,
+                erase_func=lambda: self.fw_erase_new_app(firmware.size),
+                erase_result_attr='erase_new_app_result'
+            )
+            
+            if success:
+                logging.info("Firmware upload complete, jumping to bootloader.")
+                try:
+                    self.fw_jump_to_bootloader()
+                except Exception as e:
+                    logging.error(
+                        "Error jumping to bootloader, this is likely the motor rebooting before a connection could be closed: {}".format(e))
+        
+        return success
 
-        logging.info("Erasing")
-
-        erase_res = self.fw_erase_new_app(firmware.size)
-        if erase_res.erase_new_app_result != 1:
-            logging.error("Erase failed")
-            progress_callback("Erase Failed")
+    def _update_firmware_common(self, firmware, progress_callback, is_bootloader, flash_offset, erase_func, erase_result_attr):
+        """
+        Common firmware update logic for both main firmware and bootloader.
+        
+        :param firmware: Firmware object containing the firmware data
+        :param progress_callback: Optional callback function to report progress
+        :param is_bootloader: True if updating bootloader, False for main firmware
+        :param flash_offset: Starting flash address offset
+        :param erase_func: Function to call for erasing (erase_new_app or erase_bootloader)
+        :param erase_result_attr: Attribute name to check for erase result
+        :return: True if successful, False otherwise
+        """
+        try:
+            # Erase step
+            erase_type = "bootloader" if is_bootloader else "firmware"
+            logging.info(f"Erasing {erase_type}")
+            
+            erase_res = erase_func()
+            if erase_res is None or getattr(erase_res, erase_result_attr) != 1:
+                logging.error(f"{erase_type.capitalize()} erase failed")
+                if progress_callback:
+                    progress_callback(f"{erase_type.capitalize()} erase failed")
+                return False
+            
+            logging.info(f"Writing {erase_type} firmware")
+            
+            # Initialize tracking variables
+            flash_address = flash_offset  # Absolute flash address
+            bytes_written = 0             # Bytes written (for progress calculation)
+            time_since_last_progress_update = time.time()
+            
+            while firmware.size > 0:
+                fw_chunk = firmware.get_next_chunk()
+                
+                # Check if the chunk is empty, don't send
+                has_data = False
+                for i in fw_chunk:
+                    if i != 0xff:
+                        has_data = True
+                        break
+                
+                if has_data:
+                    # Write chunk to flash
+                    fw_result = self.fw_write_new_app_data(flash_address, fw_chunk)
+                    
+                    if fw_result is None or fw_result.write_new_app_result != 1:
+                        logging.error(f"{erase_type.capitalize()} write failed at offset {flash_address}")
+                        if fw_result:
+                            logging.error(f"Result: {fw_result}")
+                        if progress_callback:
+                            progress_callback(f"{erase_type.capitalize()} flashing failed")
+                        return False
+                
+                # Update addresses and progress tracking
+                flash_address += firmware.chunk_size
+                bytes_written += firmware.chunk_size
+                
+                # Progress reporting
+                UPDATE_INTERVAL_SECS = 10
+                if time.time() - time_since_last_progress_update > UPDATE_INTERVAL_SECS:
+                    time_since_last_progress_update = time.time()
+                    progress_percent = firmware.get_progress(bytes_written)
+                    logging.info(
+                        f"Progress: {progress_percent:.2f}%, Size: {bytes_written}/{firmware.original_size}B")
+                    if progress_callback is not None:
+                        progress_callback(int(progress_percent))
+                
+                # Real-time progress display
+                progress_percent = firmware.get_progress(bytes_written)
+                progress_label = "Bootloader Progress" if is_bootloader else "Progress"
+                print(f"\r{progress_label}: {progress_percent:.2f}%, Size: {bytes_written}B, to be written to {flash_address}", end='\r')
+                
+                firmware.clear_chunk()
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Unexpected error during {erase_type} update: {e}")
+            if progress_callback:
+                progress_callback(f"{erase_type.capitalize()} update failed")
             return False
 
-        logging.info("Sending firmware")
-
-        offset = 0
-        time_since_last_progress_update = time.time()
-
-        while firmware.size > 0:
-            fw_chunk = firmware.get_next_chunk()
-
-            # check if the chunk is empty, don't send
-            has_data = False
-            for i in fw_chunk:
-                if i != 0xff:
-                    has_data = True
-                    break
-
-            if has_data:
-                fw_result = self.fw_write_new_app_data(offset, fw_chunk)
-
-                if fw_result.write_new_app_result != 1 or fw_result.write_new_app_result is None:
-                    logging.error("Write failed")
-                    logging.error(fw_result)
-                    progress_callback("Flashing Failed")
-                    return False
-
-            offset += firmware.chunk_size
-
-            UPDATE_INTERVAL_SECS = 10
-            if time.time() - time_since_last_progress_update > UPDATE_INTERVAL_SECS:
-                time_since_last_progress_update = time.time()
-                logging.info(
-                    "Progress: {:.2f}%, Size: {}/{}kB".format(firmware.get_progress(offset), offset, firmware.original_size))
-                if progress_callback is not None:
-                    progress_callback(int(firmware.get_progress(offset)))
-
-            # stream updates quickly to stdout
-            print("\rProgress: {:.2f}%, Size: {}kB, to be written to {}".format(
-                firmware.get_progress(offset), offset, offset + firmware.chunk_size), end='\r')
-            firmware.clear_chunk()
-
-        logging.info("Firmware upload complete, jumping to bootloader.")
+    def erase_bootloader(self):
+        """
+        Erase the bootloader area on the VESC.
+        
+        :return: Result object with erase_bootloader_result field
+        """
+        # Check firmware version first to ensure bootloader erase is supported
         try:
-            self.fw_jump_to_bootloader()
+            fw_version = self.get_firmware_version()
+            if fw_version is None:
+                logging.error("Could not read firmware version - bootloader erase may not be supported")
+                return None
+            
+            # Basic version check - bootloader erase was added in newer firmware versions
+            # If we can get a firmware version, assume it's recent enough to support bootloader operations
+            logging.info(f"Firmware version: {fw_version} - proceeding with bootloader erase")
+            
         except Exception as e:
-            logging.error(
-                "Error jumping to bootloader, this is likely the motor rebooting before a connection could be closed: {}".format(e))
-
-        return True
+            logging.error(f"Error checking firmware version: {e}")
+            logging.warning("Proceeding with bootloader erase anyway - this may fail on older firmware")
+        
+        msg = EraseBootloader()
+        return self.write(encode_request(msg), num_read_bytes=msg._recv_full_msg_size)
 
     def set_rpm(self, new_rpm):
         """

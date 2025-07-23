@@ -58,7 +58,12 @@ def commands_example(port, firmware, compressed):
 
         print("\nAll VESC commands are supported, plus the following:")
         print("fw\t\t- update firmware")
-        print("erase\t\t- erase firmware ")
+        print("erase\t\t- erase firmware")
+        print("fw_bl\t\t- update bootloader firmware")
+        print("\nBootloader Flashing Instructions:")
+        print("1. Update bootloader firmware with 'fw_bl'")
+        print("\nNote: Bootloader uses offset 0x60000 (different from firmware offset 0x0)")
+        print("Warning: Bootloader flashing can brick your device if interrupted!")
         print("\n\nEntering Terminal:\n====================\n")
         print("\n\n")
 
@@ -74,11 +79,21 @@ def commands_example(port, firmware, compressed):
                 logging.info("This script will exit as it doesn't handle serial ports reconnecting yet.")
                 break
 
+            if user_in == "fw_bl":
+                if firmware is None:
+                    print("No firmware file specified")
+                    continue
+                fw = Firmware(firmware, lzss=compressed)
+                motor.update_firmware(fw)
+                logging.info("Bootloader update complete. This script will exit as it doesn't handle serial ports reconnecting yet.")
+                break
+
             if user_in == "erase":
                 print("sending erase")
                 erase_res = motor.fw_erase_new_app(fw.size)
                 print("Erase status:", erase_res.erase_new_app_result)
                 break
+
 
             print(motor.send_terminal_cmd(user_in))
 
@@ -134,7 +149,7 @@ if __name__ == '__main__':
     # arguments
     parser = argparse.ArgumentParser(description='VESC Motor Example')
     parser.add_argument('-p', '--port', type=str, help='Serial port', default='')
-    parser.add_argument('-f', '--firmware', type=str, help='Firmware file', default=None)
+    parser.add_argument('-f', '--firmware', type=str, help='Firmware file (use with \"fw\" command for app firmware or \"fw_bl\" for bootloader)', default=None)
     parser.add_argument('-c', '--compressed', action='store_true', help='Compressed firmware', default=True)
     parser.add_argument('-s', '--save', type=str, help='Save parameters to file', default=None)
     parser.add_argument('-l', '--load', type=str, help='Load parameters from file', default=None)
